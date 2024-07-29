@@ -34,7 +34,7 @@ import torch.utils.hooks as hooks
 from huggingface_hub import split_torch_state_dict_into_shards
 
 from .checkpointing import load_accelerator_state, load_custom_state, save_accelerator_state, save_custom_state
-from .data_loader import DataLoaderDispatcher, prepare_data_loader, skip_first_batches
+from .data_loader import prepare_data_loader, skip_first_batches, is_data_loader_dispatcher
 from .hooks import AlignDevicesHook
 from .logging import get_logger
 from .optimizer import AcceleratedOptimizer
@@ -90,6 +90,7 @@ from .utils import (
     is_npu_available,
     is_torch_version,
     is_torch_xla_available,
+    is_torchdata_stateful_dataloader_available,
     is_xpu_available,
     load_fsdp_model,
     load_fsdp_optimizer,
@@ -154,7 +155,6 @@ _split_batches = object()
 _dispatch_batches = object()
 _even_batches = object()
 _use_seedable_sampler = object()
-
 
 class Accelerator:
     """
@@ -1137,7 +1137,7 @@ class Accelerator:
                 iterable_dl_seen = False
                 # override value in batch sampler for map-style datasets
                 for dl_idx, dl in enumerate(self._dataloaders):
-                    if isinstance(dl, DataLoaderDispatcher):
+                    if is_data_loader_dispatcher(dl):
                         iterable_dl_seen = True
                         continue
                     dl_even_batches_values.append((dl_idx, dl.batch_sampler.even_batches))
@@ -1994,11 +1994,12 @@ class Accelerator:
         return tuple(result)
 
     def prepare_data_loader(
-        self, data_loader: torch.utils.data.DataLoader, device_placement=None, slice_fn_for_dispatch=None
+        self, data_loader, device_placement=None, slice_fn_for_dispatch=None
     ):
         """
         Prepares a PyTorch DataLoader for training in any distributed setup. It is recommended to use
-        [`Accelerator.prepare`] instead.
+        [`Accelerator.prepare`] instead. 
+        If config.use_stateful_dataloader is set, prepares a torchdata StatefulDataLoader instead.
 
         Args:
             data_loader (`torch.utils.data.DataLoader`):

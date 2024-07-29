@@ -29,6 +29,9 @@ from accelerate.data_loader import (
     SkipBatchSampler,
     SkipDataLoader,
     skip_first_batches,
+    create_data_loader_dispatcher,
+    create_data_loader_shard,
+    create_skip_data_loader
 )
 from accelerate.test_utils.testing import require_torchdata_stateful_dataloader
 from accelerate.utils import is_torchdata_stateful_dataloader_available
@@ -38,6 +41,9 @@ from accelerate.utils.dataclasses import DataLoaderConfiguration
 if is_torchdata_stateful_dataloader_available():
     from torchdata.stateful_dataloader import (
         StatefulDataLoader,
+    )
+    from accelerate.stateful_data_loader import (
+        StatefulDataLoaderDispatcher, StatefulDataLoaderShard, StatefulSkipDataLoader
     )
 
 
@@ -394,18 +400,18 @@ class DataLoaderTester(unittest.TestCase):
         are instances of DataLoader and DataLoaderStateMixin.
         """
         Accelerator()
-        skip_dl = SkipDataLoader(range(16), batch_size=4, skip_batches=2)
-        dl_shard = DataLoaderShard(range(16), batch_size=4)
-        dl_dispatcher = DataLoaderDispatcher(range(16), batch_size=4)
-        assert isinstance(skip_dl, DataLoader)
-        assert isinstance(dl_shard, DataLoader)
-        assert isinstance(dl_dispatcher, DataLoader)
+        skip_dl = create_skip_data_loader(range(16), batch_size=4, skip_batches=2)
+        dl_shard = create_data_loader_shard(range(16), batch_size=4)
+        dl_dispatcher = create_data_loader_dispatcher(range(16), batch_size=4)
+        assert isinstance(skip_dl, SkipDataLoader)
+        assert isinstance(dl_shard, DataLoaderShard)
+        assert isinstance(dl_dispatcher, DataLoaderDispatcher)
 
         assert isinstance(dl_shard, DataLoaderStateMixin)
         assert isinstance(dl_dispatcher, DataLoaderStateMixin)
 
     def test_skip_data_loader(self):
-        dataloader = SkipDataLoader(list(range(16)), batch_size=4, skip_batches=2)
+        dataloader = create_skip_data_loader(list(range(16)), batch_size=4, skip_batches=2)
         assert [t.tolist() for t in dataloader] == [[8, 9, 10, 11], [12, 13, 14, 15]]
 
     def test_skip_first_batches(self):
@@ -414,7 +420,7 @@ class DataLoaderTester(unittest.TestCase):
         assert [t.tolist() for t in new_dataloader] == [[8, 9, 10, 11], [12, 13, 14, 15]]
 
     def test_end_of_dataloader(self):
-        dataloader = DataLoaderShard(list(range(16)), batch_size=4)
+        dataloader = create_data_loader_shard(list(range(16)), batch_size=4)
         for idx, _ in enumerate(dataloader):
             assert dataloader.end_of_dataloader == (idx == 3)
 
@@ -424,7 +430,7 @@ class DataLoaderTester(unittest.TestCase):
 
     def test_end_of_dataloader_dispatcher(self):
         Accelerator()
-        dataloader = DataLoaderDispatcher(range(16), batch_size=4)
+        dataloader = create_data_loader_dispatcher(range(16), batch_size=4)
         for idx, _ in enumerate(dataloader):
             assert dataloader.end_of_dataloader == (idx == 3)
 
@@ -436,7 +442,7 @@ class DataLoaderTester(unittest.TestCase):
 class StatefulDataLoaderTester(unittest.TestCase):
     @require_torchdata_stateful_dataloader
     def test_skip_data_loader(self):
-        dataloader = SkipDataLoader(list(range(16)), batch_size=4, skip_batches=2, use_stateful_dataloader=True)
+        dataloader = create_skip_data_loader(list(range(16)), batch_size=4, skip_batches=2, use_stateful_dataloader=True)
         assert isinstance(dataloader, StatefulDataLoader)
         assert [t.tolist() for t in dataloader] == [[8, 9, 10, 11], [12, 13, 14, 15]]
 
@@ -449,8 +455,7 @@ class StatefulDataLoaderTester(unittest.TestCase):
 
     @require_torchdata_stateful_dataloader
     def test_end_of_dataloader(self):
-        dataloader = DataLoaderShard(list(range(16)), batch_size=4, use_stateful_dataloader=True)
-        assert dataloader.use_stateful_dataloader
+        dataloader = create_data_loader_shard(list(range(16)), batch_size=4, use_stateful_dataloader=True)
         assert isinstance(dataloader, StatefulDataLoader)
         for idx, _ in enumerate(dataloader):
             assert dataloader.end_of_dataloader == (idx == 3)
@@ -462,7 +467,7 @@ class StatefulDataLoaderTester(unittest.TestCase):
     @require_torchdata_stateful_dataloader
     def test_end_of_dataloader_dispatcher(self):
         Accelerator()
-        dataloader = DataLoaderDispatcher(range(16), batch_size=4, use_stateful_dataloader=True)
+        dataloader = create_data_loader_dispatcher(range(16), batch_size=4, use_stateful_dataloader=True)
         assert isinstance(dataloader, StatefulDataLoader)
         for idx, _ in enumerate(dataloader):
             assert dataloader.end_of_dataloader == (idx == 3)
@@ -478,9 +483,8 @@ class StatefulDataLoaderTester(unittest.TestCase):
         Test that saving a stateful dataloader's state, then loading it back, gives the same results.
         """
         dataset = list(range(16))
-        dataloader = DataLoaderShard(dataset, batch_size=4, use_stateful_dataloader=True, num_workers=num_workers)
+        dataloader = create_data_loader_shard(dataset, batch_size=4, use_stateful_dataloader=True, num_workers=num_workers)
 
-        assert dataloader.use_stateful_dataloader
         assert isinstance(dataloader, StatefulDataLoader)
         vals = []
         for idx, val in enumerate(dataloader):
@@ -489,7 +493,7 @@ class StatefulDataLoaderTester(unittest.TestCase):
                 sd = dataloader.state_dict()
         assert len(vals) == 4
 
-        dataloader2 = DataLoaderShard(dataset, batch_size=4, use_stateful_dataloader=True, num_workers=num_workers)
+        dataloader2 = create_data_loader_shard(dataset, batch_size=4, use_stateful_dataloader=True, num_workers=num_workers)
         dataloader2.load_state_dict(sd)
 
         data1 = vals[2:]
@@ -506,7 +510,7 @@ class StatefulDataLoaderTester(unittest.TestCase):
         dataloader_config = DataLoaderConfiguration(use_stateful_dataloader=True)
         Accelerator(dataloader_config=dataloader_config)
         dataset = list(range(16))
-        dataloader = DataLoaderDispatcher(dataset, batch_size=4, use_stateful_dataloader=True, num_workers=num_workers)
+        dataloader = create_data_loader_dispatcher(dataset, batch_size=4, use_stateful_dataloader=True, num_workers=num_workers)
 
         assert dataloader.use_stateful_dataloader
         assert isinstance(dataloader, StatefulDataLoader)
@@ -516,7 +520,7 @@ class StatefulDataLoaderTester(unittest.TestCase):
             if idx == 1:
                 sd = dataloader.state_dict()
         assert len(vals) == 4
-        dataloader2 = DataLoaderDispatcher(
+        dataloader2 = create_data_loader_dispatcher(
             dataset, batch_size=4, use_stateful_dataloader=True, num_workers=num_workers
         )
         dataloader2.load_state_dict(sd)
@@ -533,12 +537,12 @@ class StatefulDataLoaderTester(unittest.TestCase):
         subclasses of DataLoaderAdapter are instances of StatefulDataLoader and DataLoaderStateMixin.
         """
         Accelerator()
-        skip_dl = SkipDataLoader(range(16), batch_size=4, skip_batches=2, use_stateful_dataloader=True)
-        dl_shard = DataLoaderShard(range(16), batch_size=4, use_stateful_dataloader=True)
-        dl_dispatcher = DataLoaderDispatcher(range(16), batch_size=4, use_stateful_dataloader=True)
-        assert isinstance(skip_dl, StatefulDataLoader)
-        assert isinstance(dl_shard, StatefulDataLoader)
-        assert isinstance(dl_dispatcher, StatefulDataLoader)
+        skip_dl = create_skip_data_loader(range(16), batch_size=4, skip_batches=2, use_stateful_dataloader=True)
+        dl_shard = create_data_loader_shard(range(16), batch_size=4, use_stateful_dataloader=True)
+        dl_dispatcher = create_data_loader_dispatcher(range(16), batch_size=4, use_stateful_dataloader=True)
+        assert isinstance(skip_dl, StatefulSkipDataLoader)
+        assert isinstance(dl_shard, StatefulDataLoaderShard)
+        assert isinstance(dl_dispatcher, StatefulDataLoaderDispatcher)
 
         assert isinstance(dl_shard, DataLoaderStateMixin)
         assert isinstance(dl_dispatcher, DataLoaderStateMixin)
@@ -558,13 +562,13 @@ class StatefulDataLoaderTester(unittest.TestCase):
 
         accelerator = Accelerator()
         stateful_dl = StatefulDataLoader(dataset, batch_size=4, num_workers=num_workers, generator=g())
-        skip_dl = SkipDataLoader(
+        skip_dl = create_skip_data_loader(
             dataset, batch_size=4, num_workers=num_workers, generator=g(), use_stateful_dataloader=True
         )
-        dl_shard = DataLoaderShard(
+        dl_shard = create_data_loader_shard(
             dataset, batch_size=4, num_workers=num_workers, generator=g(), use_stateful_dataloader=True
         )
-        dl_dispatcher = DataLoaderDispatcher(
+        dl_dispatcher = create_data_loader_dispatcher(
             dataset, batch_size=4, num_workers=num_workers, generator=g(), use_stateful_dataloader=True
         )
 
@@ -606,7 +610,7 @@ class StatefulDataLoaderTester(unittest.TestCase):
         assert expected_state_dict == dl_dispatcher_state_dict
 
         # Load the state dict into new dataloaders
-        manual_skip_dl = SkipDataLoader(
+        manual_skip_dl = create_skip_data_loader(
             dataset,
             batch_size=4,
             num_workers=num_workers,
@@ -616,15 +620,15 @@ class StatefulDataLoaderTester(unittest.TestCase):
         )
         loaded_stateful_dl = StatefulDataLoader(dataset, batch_size=4, num_workers=num_workers, generator=g())
         loaded_stateful_dl.load_state_dict(expected_state_dict)
-        loaded_skip_dl = SkipDataLoader(
+        loaded_skip_dl = create_skip_data_loader(
             dataset, batch_size=4, num_workers=num_workers, generator=g(), use_stateful_dataloader=True
         )
         loaded_skip_dl.load_state_dict(expected_state_dict)
-        loaded_dl_shard = DataLoaderShard(
+        loaded_dl_shard = create_data_loader_shard(
             dataset, batch_size=4, num_workers=num_workers, generator=g(), use_stateful_dataloader=True
         )
         loaded_dl_shard.load_state_dict(expected_state_dict)
-        loaded_dl_dispatcher = DataLoaderDispatcher(
+        loaded_dl_dispatcher = create_data_loader_dispatcher(
             dataset, batch_size=4, num_workers=num_workers, generator=g(), use_stateful_dataloader=True
         )
         loaded_dl_dispatcher.load_state_dict(expected_state_dict)
