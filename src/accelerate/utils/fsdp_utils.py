@@ -517,6 +517,9 @@ def fsdp2_prepare_model(accelerator, model: torch.nn.Module) -> torch.nn.Module:
     elif fsdp2_plugin.auto_wrap_policy is size_based_auto_wrap_policy:
         auto_wrap_policy_type = "size"
 
+    # TODO: Remove this hardcoded override once I get this to actually work
+    auto_wrap_policy_type = "lora" # DO NOT MERGE THIS LINE INTO MAIN. 
+    
     # We set `auto_wrap_policy` to `functools.partial` to avoid creating it again
     # This is because of `apply_activation_checkpointing` which will can reuse this function
     fsdp2_plugin.set_auto_wrap_policy(model)
