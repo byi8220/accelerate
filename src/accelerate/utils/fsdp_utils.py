@@ -612,6 +612,18 @@ def fsdp2_prepare_auto_wrap_policy(
 
         def policy(module: torch.nn.Module) -> bool:
             return module.numel() > fsdp2_plugin.min_num_params
+    elif auto_wrap_policy_type == "lora":
+        # Based on https://github.com/pytorch/torchtune/blob/2e5f6475f3d0b2c4f9ffa83e8db3623862636bcd/torchtune/training/_distributed.py#L245
+        def policy(module: torch.nn.Module) -> bool:
+            # Assumes lora_a and lora_b are nn.Linears that are the
+            # only trainable modules in the entire network. Wraps
+            # these in separate FSDP unit to work around FSDP allocating
+            # extra gradient memory when wrapped with other modules.
+            if hasattr(module, "weight") and module.weight.requires_grad:
+                return True
+
+            return False # Should this be `isinstance(module, tuple(modules_to_wrap))`?
+
     else:
         return None
 
