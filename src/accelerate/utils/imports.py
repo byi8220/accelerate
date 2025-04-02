@@ -161,8 +161,6 @@ def is_torchao_available():
 
 
 def is_deepspeed_available():
-    if is_mlu_available():
-        return _is_package_available("deepspeed", metadata_name="deepspeed-mlu")
     return _is_package_available("deepspeed")
 
 
@@ -176,6 +174,8 @@ def is_bf16_available(ignore_tpu=False):
         return not ignore_tpu
     if is_cuda_available():
         return torch.cuda.is_bf16_supported()
+    if is_mlu_available():
+        return torch.mlu.is_bf16_supported()
     if is_mps_available():
         return False
     return True
@@ -464,10 +464,6 @@ def is_xpu_available(check_device=False):
     Checks if XPU acceleration is available either via `intel_extension_for_pytorch` or via stock PyTorch (>=2.4) and
     potentially if a XPU is in the environment
     """
-
-    "check if user disables it explicitly"
-    if not parse_flag_from_env("ACCELERATE_USE_XPU", default=True):
-        return False
 
     if is_ipex_available():
         import intel_extension_for_pytorch  # noqa: F401

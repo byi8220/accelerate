@@ -346,8 +346,8 @@ class Accelerator:
             if not is_deepspeed_available():
                 raise ImportError("DeepSpeed is not installed => run `pip install deepspeed` or build it from source.")
             if is_mlu_available():
-                if compare_versions("deepspeed-mlu", "<", "0.10.1"):
-                    raise ImportError("DeepSpeed MLU version must be >= 0.10.1. Please update DeepSpeed MLU.")
+                if compare_versions("deepspeed", "<", "0.15.2"):
+                    raise ImportError("DeepSpeed MLU version must be >= 0.15.2. Please update DeepSpeed.")
             elif is_musa_available():
                 if compare_versions("deepspeed", "<", "0.14.3"):
                     raise ImportError("DeepSpeed MUSA version must be >= 0.14.3. Please update DeepSpeed.")
@@ -445,9 +445,9 @@ class Accelerator:
         self.has_fp8_handler = False
         if kwargs_handlers is not None:
             for handler in kwargs_handlers:
-                assert isinstance(
-                    handler, KwargsHandler
-                ), f"Unsupported kwargs handler passed: {handler}, must be one that inherits `accelerate.utils.KwargsHandler`."
+                assert isinstance(handler, KwargsHandler), (
+                    f"Unsupported kwargs handler passed: {handler}, must be one that inherits `accelerate.utils.KwargsHandler`."
+                )
                 # Add the handler class to the set of found handlers
                 if handler.__class__ in found_handlers:
                     raise ValueError(f"You can only pass one {handler.__class__} in `kwargs_handlers`.")
@@ -1430,10 +1430,8 @@ class Accelerator:
                             param_group["params"][i].data_ptr = p.data_ptr()
 
         if self.distributed_type in [DistributedType.MULTI_CPU, DistributedType.MULTI_XPU, DistributedType.NO]:
-            if self.device.type == "cpu" and self.state.use_ipex:
-                args = self._prepare_ipex_or_xpu(*args)
-            elif self.device.type == "xpu" and is_xpu_available():
-                args = self._prepare_ipex_or_xpu(*args)
+            if (self.device.type == "cpu" or self.device.type == "xpu") and self.state.use_ipex:
+                args = self._prepare_ipex(*args)
         if self.fp8_backend == "TE":
             args = self._prepare_te(*args)
         elif self.fp8_backend == "AO":
@@ -2178,11 +2176,11 @@ class Accelerator:
 
         return tuple(result)
 
-    def _prepare_ipex_or_xpu(self, *args):
+    def _prepare_ipex(self, *args):
         """
-        Prepares model and optimizer for training with IPEX or XPU acceleration. This covers 3 cases, IPEX compiled
-        with CPU only support, IPEX compiled with XPU support and training with XPU pytorch backend available in stock
-        pytorch starting from version 2.4.
+        Prepares model and optimizer for training with IPEX on CPU/XPU. This covers 3 cases, IPEX compiled with CPU
+        only support, IPEX compiled with XPU support and training with XPU pytorch backend available in stock pytorch
+        starting from version 2.4.
         """
         if self.state.use_ipex:
             if not is_ipex_available():
