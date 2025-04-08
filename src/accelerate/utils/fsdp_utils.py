@@ -442,19 +442,39 @@ def fsdp2_load_full_state_dict(accelerator, model: torch.nn.Module, full_sd: dic
 
     sharded_sd = model.state_dict()
     if accelerator.is_main_process:
-        for (param_name, full_param), sharded_param in zip(full_sd.items(), sharded_sd.values()):
-            full_param = full_param.detach().cuda()
-            mesh = sharded_param.device_mesh
-            dist.broadcast(full_param, src=0, group=mesh.get_group())
-            sharded_tensor = distribute_tensor(full_param, mesh, sharded_param.placements)
-            sharded_sd[param_name] = sharded_tensor
+        for param_name, full_param in full_sd.items():
+            if param_name in sharded_sd:
+                sharded_param = sharded_sd[param_name]
+                full_param = full_param.detach().cuda()
+                mesh = sharded_param.device_mesh
+                dist.broadcast(full_param, src=0, group=mesh.get_group())
+                sharded_tensor = distribute_tensor(full_param, mesh, sharded_param.placements)
+                if param_name in sharded_sd:
+                    sharded_sd[param_name] = sharded_tensor
+        # for (param_name, full_param), sharded_param in zip(full_sd.items(), sharded_sd.values()):
+        #     full_param = full_param.detach().cuda()
+        #     mesh = sharded_param.device_mesh
+        #     dist.broadcast(full_param, src=0, group=mesh.get_group())
+        #     sharded_tensor = distribute_tensor(full_param, mesh, sharded_param.placements)
+        #     if param_name in sharded_sd:
+        #         sharded_sd[param_name] = sharded_tensor
     else:
-        for param_name, sharded_param in sharded_sd.items():
-            full_tensor = torch.empty(sharded_param.size(), device="cuda", dtype=sharded_param.dtype)
-            mesh = sharded_param.device_mesh
-            dist.broadcast(full_tensor, src=0, group=mesh.get_group())
-            sharded_tensor = distribute_tensor(full_tensor, mesh, sharded_param.placements)
-            sharded_sd[param_name] = sharded_tensor
+        for param_name, full_param in full_sd.items():
+            if param_name in sharded_sd:
+                sharded_param = sharded_sd[param_name]
+                full_tensor = torch.empty(sharded_param.size(), device="cuda", dtype=sharded_param.dtype)
+                mesh = sharded_param.device_mesh
+                dist.broadcast(full_tensor, src=0, group=mesh.get_group())
+                sharded_tensor = distribute_tensor(full_tensor, mesh, sharded_param.placements)
+                if param_name in sharded_sd:
+                    sharded_sd[param_name] = sharded_tensor
+        # for param_name, sharded_param in sharded_sd.items():
+        #     full_tensor = torch.empty(sharded_param.size(), device="cuda", dtype=sharded_param.dtype)
+        #     mesh = sharded_param.device_mesh
+        #     dist.broadcast(full_tensor, src=0, group=mesh.get_group())
+        #     sharded_tensor = distribute_tensor(full_tensor, mesh, sharded_param.placements)
+        #     if param_name in sharded_sd:
+        #         sharded_sd[param_name] = sharded_tensor
 
     model.load_state_dict(sharded_sd)
 
@@ -516,6 +536,8 @@ def fsdp2_prepare_model(accelerator, model: torch.nn.Module) -> torch.nn.Module:
         auto_wrap_policy_type = "transformer"
     elif fsdp2_plugin.auto_wrap_policy is size_based_auto_wrap_policy:
         auto_wrap_policy_type = "size"
+    
+    auto_wrap_policy_type = "qlora" # TODO: Un-hardcode this once a POC works
 
     # We set `auto_wrap_policy` to `functools.partial` to avoid creating it again
     # This is because of `apply_activation_checkpointing` which will can reuse this function
@@ -612,6 +634,34 @@ def fsdp2_prepare_auto_wrap_policy(
 
         def policy(module: torch.nn.Module) -> bool:
             return module.numel() > fsdp2_plugin.min_num_params
+
+    elif auto_wrap_policy_type == "qlora":
+        no_split_modules = model._no_split_modules
+        if no_split_modules is None:
+            no_split_modules = []
+        transformer_cls_names_to_wrap = list(no_split_modules)
+        if fsdp2_plugin.transformer_cls_names_to_wrap is not None:
+            transformer_cls_names_to_wrap = fsdp2_plugin.transformer_cls_names_to_wrap
+        transformer_cls_to_wrap = set()
+
+        for layer_class in transformer_cls_names_to_wrap:
+            transformer_cls = get_module_class_from_name(model, layer_class)
+            if transformer_cls is None:
+                raise ValueError(f"Could not find the transformer layer class {layer_class} in the model.")
+            transformer_cls_to_wrap.add(transformer_cls)
+
+        # Eagerly wrap Linear4bit leaf nodes, and then defer to transformer level.
+        def policy(module: torch.nn.Module) -> bool:
+            from bitsandbytes.nn.modules import Linear4bit
+            if type(module) == Linear4bit:
+                return True
+            # Dirty hack to get the float16 params in their own group 
+            if hasattr(module, "weight") and module.weight.dtype == torch.float16:
+                return True
+            if fsdp2_plugin.transformer_cls_names_to_wrap is None:
+                return False
+            do_wrap = isinstance(module, tuple(transformer_cls_to_wrap))
+            return do_wrap
     else:
         return None
 
